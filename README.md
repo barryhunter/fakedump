@@ -50,3 +50,14 @@ runs the full query against a specific database (no auto limit!)
 
     php fakedump.php -hmaster.domain.com -utest -psecret database "select * from table where title != 'Other'" output
 
+## See also
+
+https://github.com/hgfischer/mysqlsuperdump
+
+* kinda similar, but found after started on this. And also have more complex requirements, want to omit columns, and even create tables via JOINs
+
+http://data.geograph.org.uk/dumps/
+
+* The reason this script was created!
+
+
