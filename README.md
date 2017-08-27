@@ -2,8 +2,9 @@
 
 Rather rudimentry 'mysqldump' replacement, that takes an arbitary query, so can dump virtual tables, even views (with their data!)
 
-... great for filtering (by rows OR by columns!) or even creating new virtual tabels from joins/group-by's etc.
+... great for filtering (by rows OR by columns!) or even creating new virtual tables from joins and with group-by's etc.
 
+**Basically it's for dumping tables that don't *really* exist!**
 
 ## Known Limitations
 
@@ -26,8 +27,11 @@ Rather rudimentry 'mysqldump' replacement, that takes an arbitary query, so can 
 * [query] is the main workhorse, specify a full mysql query like "SELECT * FROM table" - but importantly its a full query, so can select what columns, rows etc to include. 
 (ie can SELECT id,title,SUBSTRING(created,1,10),... FROM, use JOINS, a WHERE clause, even GROUP BY and ORDER BY)
 
+  (if leave undefined, will run a "SELECT * FROM [table] LIMIT [limit]" as a quick shortcut)
+
 * [table] is what to call the table in the final dump - it can be a name that doesnt exist in source databaes!
-   (if leave undefined, will attempt to use the name of hte first table in the [select]
+
+  (if leave undefined, will attempt to use the name of hte first table in the [select])
 
 * [limit] if just specify a table (no query) will automatically add this limit!
 
