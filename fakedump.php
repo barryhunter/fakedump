@@ -1,3 +1,4 @@
+#!/usr/bin/php
 <?php
  /*
 Rather rudimentry 'mysqldump' replacement, that takes an arbitary query, so can dump virtual tables, even views (with their data!)
@@ -55,7 +56,7 @@ $p = array(
 );
 
 //what type of query to run!
-$func = (true)?'mysql_query':'mysql_unbuffered_query';
+$func = (false)?'mysql_query':'mysql_unbuffered_query';
 
 ######################################
 # basic argument parser! (somewhat mimic mysqldump, unnamed params are 'magic')
@@ -127,6 +128,28 @@ if (empty($db)) {
 print "-- ".date('r')."\n\n";
 
 ######################################
+# maker
+
+if (!empty($p['make'])) {
+
+	$select0 = preg_replace('/(\s+limit\s+\d+\s*,?\s*\d*|\s+$)/i',' limit 1',$p['select']." ");
+
+        $result = $func($select0) or die("unable to run {$p['select']};\n".mysql_error()."\n\n");
+
+        $types=array();
+        $fields = mysql_num_fields($result);
+        for ($i=0; $i < $fields; $i++) {
+		$name = mysql_field_name($result,$i);
+                $types[$name] = mysql_field_type($result,$i);
+        }
+        print_r($types);
+
+	print "\n\nSELECT ".implode(',',array_keys($types))." FROM {$p['table']}\n\n";
+
+	exit;
+}
+
+######################################
 # schema
 
 if (!empty($p['schema'])) {
@@ -137,10 +160,13 @@ if (!empty($p['schema'])) {
 	// use a trick of a temporally table with limit 0 - so mysql creates the right schema automatically!
 
 	$extra = '';
-	$select0 = preg_replace('/(\s+limit\s+\d+\s*,?\s*\d*|\s+$)/i',' limit 0',$p['select']);
+	$select0 = preg_replace('/(\s+limit\s+\d+\s*,?\s*\d*|\s+$)/i',' limit 0',$p['select']." ");
 	if (!empty($p['i'])) $extra = "({$p['i']})";
 	if (!empty($p['e'])) $extra .= " ENGINE={$p['e']}";
 	$create = "create TEMPORARY table `{$p['table']}` $extra $select0";
+
+	//small test, to to be able to dump enums as numeric
+	$create = preg_replace("/(\w+)\+0/",'$1',$create);
 
 	$result = mysql_query($create) or die("unable to run $create;\n".mysql_error()."\n\n");
 
@@ -158,18 +184,36 @@ if (!empty($p['schema'])) {
 
 if (!empty($p['data'])) {
 
+	if (!empty($p['tsv'])) {
+		$h = gzopen($p['tsv'],'w');
+	}
+
+
 	if (!empty($p['lock'])) mysql_query("LOCK TABLES `{$p['table']}` READ"); //todo this actully needs extact the list of tableS from $select!
 
 	$result = $func($p['select']) or die("unable to run {$p['select']};\n".mysql_error()."\n\n");
 
 	print "-- dumping ".mysql_num_rows($result)." rows\n\n";
 
+	$names=array();
 	$types=array();
 	$fields = mysql_num_fields($result);
 	for ($i=0; $i < $fields; $i++) {
+		$names[] = mysql_field_name($result,$i);
 		$types[$i] = mysql_field_type($result,$i);
 	}
 	//print_r($types);
+
+	if (!empty($p['tsv'])) {
+		gzwrite($h,implode("\t",$names)."\n");
+
+		//alas php doesnt have a single function for
+		//   Newline, tab, NUL, and backslash are written as \n, \t, \0, and \\.
+		function escape_tsv($in) {
+			return addcslashes(str_replace("\r",'',$in),"\\\n\t\0");
+		}
+	}
+
 	while($row = mysql_fetch_row($result)) {
 		print "INSERT INTO `{$p['table']}` VALUES (";
 		$sep = '';
@@ -182,6 +226,10 @@ if (!empty($p['data'])) {
 			$sep = ',';
 		}
 		print ");\n";
+		if (!empty($p['tsv'])) {
+			$row = array_map('escape_tsv',$row); //mimik what mysql client does, by escaping these chars, works with mysqlimport!
+         	        gzwrite($h,implode("\t",$row)."\n");
+	        }
 	}
 
 	if (!empty($p['lock'])) mysql_query("UNLOCK TABLES");
