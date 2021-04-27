@@ -55,8 +55,8 @@ $p = array(
 	'limit'=>10, //only used if $select is changed
 );
 
-//what type of query to run!
-$func = (false)?'mysql_query':'mysql_unbuffered_query';
+//using unbuffered_query means the app is less likely to be killed oom!
+$options = MYSQLI_USE_RESULT;
 
 ######################################
 # basic argument parser! (somewhat mimic mysqldump, unnamed params are 'magic')
@@ -80,9 +80,8 @@ if (count($argv) > 1) {
 		}
 	}
 	if (!empty($p['h']) || !empty($p['u'])) {
-		$db = mysql_connect($p['h'],$p['u'],$p['p']) or die("unable to connect\n".mysql_error()."\n");
-		if (count($s))
-			mysql_select_db(array_shift($s),$db);
+		$dbname = (count($s))?array_shift($s):null;
+		$db = mysqli_connect($p['h'],$p['u'],$p['p'],$dbname) or die("unable to connect\n".mysqli_error($db)."\n");
 	}
 	if (!empty($s)) {
 		$p['table'] = ''; //leave to be autodetected below!
@@ -121,8 +120,7 @@ if (!empty($p['d'])) {
 ######################################
 
 if (empty($db)) {
-	$db = mysql_connect("localhost",'root','');
-	mysql_select_db('test',$db);
+	$db = mysqli_connect("localhost",'root','','test');
 }
 
 print "-- ".date('r')."\n\n";
@@ -134,15 +132,9 @@ if (!empty($p['make'])) {
 
 	$select0 = preg_replace('/(\s+limit\s+\d+\s*,?\s*\d*|\s+$)/i',' limit 1',$p['select']." ");
 
-        $result = $func($select0) or die("unable to run {$p['select']};\n".mysql_error()."\n\n");
+        $result = mysqli_query($db,$select0) or die("unable to run {$p['select']};\n".mysqli_error($db)."\n\n");
 
-        $types=array();
-        $fields = mysql_num_fields($result);
-        for ($i=0; $i < $fields; $i++) {
-		$name = mysql_field_name($result,$i);
-                $types[$name] = mysql_field_type($result,$i);
-        }
-        print_r($types);
+        $types = mysqli_fetch_fields($result);
 
 	print "\n\nSELECT ".implode(',',array_keys($types))." FROM {$p['table']}\n\n";
 
@@ -155,7 +147,11 @@ if (!empty($p['make'])) {
 if (!empty($p['schema'])) {
 	print "-- dumping schema --\n\n";
 
+//TODO - bodge (really should be a config option, its used here for the 'by myriad' breakdown, so can import multiple myriads
+if (strpos($p['select'],'grid_reference LIKE')) {
+} else {
 	print "DROP TABLE IF EXISTS `{$p['table']}`;\n";
+}
 
 	// use a trick of a temporally table with limit 0 - so mysql creates the right schema automatically!
 
@@ -168,15 +164,19 @@ if (!empty($p['schema'])) {
 	//small test, to to be able to dump enums as numeric
 	$create = preg_replace("/(\w+)\+0/",'$1',$create);
 
-	$result = mysql_query($create) or die("unable to run $create;\n".mysql_error()."\n\n");
+	$result = mysqli_query($db,$create) or die("unable to run $create;\n".mysqli_error($db)."\n\n");
 
-	$result = mysql_query("SHOW CREATE table `{$p['table']}`") or die("unable to run $create;\n".mysql_error()."\n\n");
-	$row = mysql_fetch_assoc($result);
+	$result = mysqli_query($db,"SHOW CREATE table `{$p['table']}`") or die("unable to run $create;\n".mysqli_error($db)."\n\n");
+	$row = mysqli_fetch_assoc($result);
+//TODO - bodge
+if (strpos($p['select'],'grid_reference LIKE')) {
+	$create_table = str_replace('CREATE TEMPORARY TABLE','CREATE TABLE IF NOT EXISTS',$row['Create Table']);
+} else {
 	$create_table = str_replace('CREATE TEMPORARY TABLE','CREATE TABLE',$row['Create Table']);
-
+}
 	print "$create_table;\n\n";
 
-	$result = mysql_query("drop TEMPORARY table `{$p['table']}`");
+	$result = mysqli_query($db,"drop TEMPORARY table `{$p['table']}`");
 }
 
 ######################################
@@ -189,20 +189,31 @@ if (!empty($p['data'])) {
 	}
 
 
-	if (!empty($p['lock'])) mysql_query("LOCK TABLES `{$p['table']}` READ"); //todo this actully needs extact the list of tableS from $select!
+	if (!empty($p['lock'])) mysqli_query($db,"LOCK TABLES `{$p['table']}` READ"); //todo this actully needs extact the list of tableS from $select!
 
-	$result = $func($p['select']) or die("unable to run {$p['select']};\n".mysql_error()."\n\n");
+	$result = mysqli_query($db,$p['select'],$options) or die("unable to run {$p['select']};\n".mysqli_error($db)."\n\n");
 
-	print "-- dumping ".mysql_num_rows($result)." rows\n\n";
+	print "-- dumping ".(empty($options)?mysqli_num_rows($result):'all')." rows\n\n";
 
-	$names=array();
 	$types=array();
-	$fields = mysql_num_fields($result);
-	for ($i=0; $i < $fields; $i++) {
-		$names[] = mysql_field_name($result,$i);
-		$types[$i] = mysql_field_type($result,$i);
+	$fields=mysqli_fetch_fields($result);
+	foreach ($fields as $key => $obj) {
+		switch($obj->type) {
+	                case MYSQLI_TYPE_INT24 :
+        	        case MYSQLI_TYPE_LONG :
+                	case MYSQLI_TYPE_LONGLONG :
+	                case MYSQLI_TYPE_SHORT :
+        	        case MYSQLI_TYPE_TINY :
+				$types[$key] = 'int'; break;
+			case MYSQLI_TYPE_FLOAT :
+			case MYSQLI_TYPE_DOUBLE :
+			case MYSQLI_TYPE_DECIMAL :
+				$types[$key] = 'real'; break;
+			default:
+				$types[$key] = 'other'; break; //we dont actully care about the exact type, other than knowing numeric
+		}
 	}
-	//print_r($types);
+	$names=array_keys($types);
 
 	if (!empty($p['tsv'])) {
 		gzwrite($h,implode("\t",$names)."\n");
@@ -214,14 +225,14 @@ if (!empty($p['data'])) {
 		}
 	}
 
-	while($row = mysql_fetch_row($result)) {
+	while($row = mysqli_fetch_row($result)) {
 		print "INSERT INTO `{$p['table']}` VALUES (";
 		$sep = '';
 		foreach($row as $idx => $value) {
 			if (is_null($value))
 				$value = 'NULL';
 			elseif ($types[$idx] != 'int' && $types[$idx] != 'real') //todo maybe add is_numeric to this criteria?
-				$value = "'".mysql_real_escape_string($value)."'";
+				$value = "'".mysqli_real_escape_string($db,$value)."'";
 			print "$sep$value";
 			$sep = ',';
 		}
@@ -232,7 +243,7 @@ if (!empty($p['data'])) {
 	        }
 	}
 
-	if (!empty($p['lock'])) mysql_query("UNLOCK TABLES");
+	if (!empty($p['lock'])) mysqli_query($db,"UNLOCK TABLES");
 }
 
 ######################################
