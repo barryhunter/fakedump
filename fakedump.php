@@ -134,9 +134,13 @@ if (!empty($p['make'])) {
 
         $result = mysqli_query($db,$select0) or die("unable to run {$p['select']};\n".mysqli_error($db)."\n\n");
 
-        $types = mysqli_fetch_fields($result);
+	$names= array();
+        $fields = mysqli_fetch_fields($result);
+	foreach ($fields as $key => $obj) {
+		$names[] = $obj->name;
+print_r($fields);
 
-	print "\n\nSELECT ".implode(',',array_keys($types))." FROM {$p['table']}\n\n";
+	print "\n\nSELECT ".implode(',',$names))." FROM {$p['table']}\n\n";
 
 	exit;
 }
@@ -195,25 +199,26 @@ if (!empty($p['data'])) {
 
 	print "-- dumping ".(empty($options)?mysqli_num_rows($result):'all')." rows\n\n";
 
+	$names=array();
 	$types=array();
 	$fields=mysqli_fetch_fields($result);
 	foreach ($fields as $key => $obj) {
+		$names[] = $obj->name;
 		switch($obj->type) {
 	                case MYSQLI_TYPE_INT24 :
         	        case MYSQLI_TYPE_LONG :
                 	case MYSQLI_TYPE_LONGLONG :
 	                case MYSQLI_TYPE_SHORT :
         	        case MYSQLI_TYPE_TINY :
-				$types[$key] = 'int'; break;
+				$types[] = 'int'; break;
 			case MYSQLI_TYPE_FLOAT :
 			case MYSQLI_TYPE_DOUBLE :
 			case MYSQLI_TYPE_DECIMAL :
-				$types[$key] = 'real'; break;
+				$types[] = 'real'; break;
 			default:
-				$types[$key] = 'other'; break; //we dont actully care about the exact type, other than knowing numeric
+				$types[] = 'other'; break; //we dont actully care about the exact type, other than knowing numeric
 		}
 	}
-	$names=array_keys($types);
 
 	if (!empty($p['tsv'])) {
 		gzwrite($h,implode("\t",$names)."\n");
