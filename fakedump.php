@@ -140,7 +140,7 @@ if (!empty($p['make'])) {
 		$names[] = $obj->name;
 print_r($fields);
 
-	print "\n\nSELECT ".implode(',',$names))." FROM {$p['table']}\n\n";
+	print "\n\nSELECT ".implode(',',$names)." FROM {$p['table']}\n\n";
 
 	exit;
 }
