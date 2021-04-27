@@ -136,7 +136,7 @@ if (!empty($p['make'])) {
 
 	$names= array();
         $fields = mysqli_fetch_fields($result);
-	foreach ($fields as $key => $obj) {
+	foreach ($fields as $key => $obj)
 		$names[] = $obj->name;
 print_r($fields);
 
