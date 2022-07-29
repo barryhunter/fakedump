@@ -1,16 +1,22 @@
 #!/usr/bin/php
 <?php
  /*
-Kinda works like 'mysqldump' but for indexes in Manticore/Sphinx
+Works like 'mysqldump' but for indexes in Manticore/Sphinx
+
+... useful in theory for a logical backup of a ManticoreSearch or SphinxSearch Index. Most useful for RT indexes, but can in theory dump stored fields and attributes from even plain indexes.
 
 Known Limiations
-* Multibyte (UTF8 etc!) hasnt been tested!?
-* doesnt deal propelly with locks, collations, timezones and version compatiblity etc that mysqldump does.
-* can only dump ONE table at a time!
+* Multibyte (UTF8 etc!) hasn't been tested!?
+* doesn't deal propelly with locks, collations, timezones and version compatiblity etc
+* can only dump ONE index at a time!
 * does not support either extended or complete inserts (like mysqldump does), nor 'replace into'
-* at the moment, does not create complete 'CREATE TABLES' for plain indexesd.
+* creating fake a 'CREATE TABLE' command for the index is rudimentry. does not correctly deal with all combinations
+* if specing a limit to only dump some rows, then must be <=1000 (max_matches!), larger values doesn't work yet
+* NOT tested with percolate indexes
 
- * This file copyright (C) 2021 Barry Hunter (github@barryhunter.co.uk)
+***********************************************
+
+ * This file copyright (C) 2022 Barry Hunter (github@barryhunter.co.uk)
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -33,8 +39,7 @@ $start = microtime(true);
 # defaults
 
 $p = array(
-	'schema'=>true,
-		'rt'=>false, //create a fake table from DESCRIBE
+	'schema'=>true, //or set to 'mysql' to get a 'fake' mysql-compatible CREATE TABLE! (to insert data into database)
 	'data'=>true,
 	'lock'=>0,
 
@@ -46,7 +51,7 @@ $p = array(
 		//the table to CALL the output, doesnt have to exist (leave blank to use teh first table from the 'select')
 		'table' => "index1",
 
-	'limit'=>10, //only used if $select is changed
+	'limit'=>false, //only used if $select is changed
 );
 
 ######################################
@@ -79,7 +84,7 @@ if (count($argv) > 1) {
 		while (!empty($s) && ($value = array_pop($s))) {
 			if (preg_match('/^\w+$/',$value)) {
 				$p['table'] = $value;
-				$p['select'] = "select * from `{$p['table']}`"; // limit {$p['limit']}";
+				$p['select'] = "select * from `{$p['table']}`"; // limit {$p['limit']}"; //limit added later!
 			} else
 				$p['select'] = $value;
 		}
@@ -87,14 +92,14 @@ if (count($argv) > 1) {
 } else {
 	die("
 Usage:
-php indexdump.php [-hhost] [-uuser] [-ppass] [query] [table] [--data=0] [--schema=0] [--lock=1]
+php indexdump.php [-hhost] [-uuser] [-ppass] [query] [table] [limit] [--data=0] [--schema=0] [--lock=1]
 
 Examples:
 php indexdump.php index 100
   # 100 rows from index
 php indexdump.php -hmaster.domain.com \"select * from table where title != 'Other'\"
-  # runs the full query against a specific index (no auto limit!)
-  # NOTE: do 
+  # runs the full query against a specific index - dumping all rows. - you CAN use MATCH(..)
+  # NOTE: should NOT add ORDER BY nor LIMIT to the query, as this script needs to add them to dump all rows (because of max_matches) 
 ");
 }
 
@@ -115,13 +120,60 @@ if (empty($db)) {
 
 print "-- ".date('r')."\n\n";
 
+$mvas = array();
+
+######################################
+# fake schema for mysql
+
+if ($p['schema'] === 'mysql') {
+	print "-- dumping mysql compatible schema\n\n";
+        $postfix = " LIMIT 1000"; //not ideall, but to to get LOTS of rows so as get string lengths!
+
+        $result = mysqli_query($db,$p['select'].$postfix) or die("unable to run {$p['select']}$postfix;\n".mysqli_error($db)."\n\n");
+
+        $fields=mysqli_fetch_fields($result);
+
+	print "CREATE TABLE `{$p['table']}` (\n"; $sep = '';
+        foreach ($fields as $key => $obj) {
+		print "$sep";
+                switch($obj->type) {
+			//we make assumptons that ints are unsigned (as they are in sphinx), except bigint
+                        case MYSQLI_TYPE_INT24 :
+				print "\t`{$obj->name}` mediumint unsigned not null"; break;
+                        case MYSQLI_TYPE_LONG :
+				print "\t`{$obj->name}` int unsigned not null"; break;
+                        case MYSQLI_TYPE_LONGLONG :
+				print "\t`{$obj->name}` bigint not null";
+				if ($obj->name == 'id')
+					print " primary key";
+				break;
+                        case MYSQLI_TYPE_SHORT :
+				print "\t`{$obj->name}` smallint unsigned not null"; break;
+                        case MYSQLI_TYPE_TINY :
+				print "\t`{$obj->name}` tinyint unsigned not null"; break;
+                        case MYSQLI_TYPE_FLOAT :
+				print "\t`{$obj->name}` float not null"; break;
+                        case MYSQLI_TYPE_DOUBLE :
+                        case MYSQLI_TYPE_DECIMAL :
+				print "\t`{$obj->name}` double not null"; break;
+			case MYSQLI_TYPE_STRING :
+				if ($obj->max_length <= 1024) { //if long, fall though and use TEXT
+					print "\t`{$obj->name}` varchar({$obj->max_length}) not null"; break;
+				}
+                        default:
+				print "\t`{$obj->name}` text not null"; break;
+                }
+		$sep = ",\n";
+	}
+	print "\n);\n\n";
+
 ######################################
 # schema
 
-if (!empty($p['schema'])) {
-	print "-- dumping schema --\n\n";
+} elseif (!empty($p['schema'])) {
+	print "-- dumping schema (to create the table in RT mode)\n\n";
 
-	$result = mysqli_query($db,"SHOW CREATE table `{$p['table']}`");// or die("unable to run SHOW CREATE TABLE;\n".mysqli_error($db)."\n\n");
+	$result = mysqli_query($db,"SHOW CREATE table `{$p['table']}`");
 
 	if ($result) { //some versions of manticore will show create table (particully in RT mode)
 		$row = mysqli_fetch_assoc($result);
@@ -132,6 +184,7 @@ if (!empty($p['schema'])) {
 		$create_table = "CREATE TABLE `{$p['table']}` ("; $sep = "\n";
 		$result = mysqli_query($db,"DESCRIBE `{$p['table']}`") or die("unable to describe\n".mysqli_error($db)."\n\n");
 
+		$fields = array();
 		while ($row = mysqli_fetch_assoc($result)) {
 
 			if ($row['Type'] == 'local') { //its a distributed index!
@@ -147,17 +200,33 @@ if (!empty($p['schema'])) {
 				elseif ($row['Type'] == 'text')
 					$create_table .= " text {$row['Properties']}";
 				elseif ($row['Type'] == 'uint')
-					$create_table .= " interger";
-				else
+					$create_table .= " integer";
+				elseif ($row['Type'] == 'mva') {
+					$create_table .= " multi";
+					$mvas[$row['Field']] = 1;
+				} elseif ($row['Type'] == 'string') {
+					$create_table .= " string";
+					if (isset($fields[$row['Field']])) {
+						$create_table .= " indexed";
+						unset($fields[$row['Field']]); //so that fields only include 'undumped' fields
+					}
+				} else
 					$create_table .= " {$row['Type']}";
 
 				$sep = ",\n";
+			} elseif ($row['Type'] == 'field') {
+				$fields[$row['Field']] = 1;
 			}
 		}
 		$create_table .= "\n)";
 	}
 
 	print "$create_table;\n\n";
+
+	if (!empty($fields)) { // stored fields show as type 'text' so not included here
+		print "-- WARNING: the index contains the following fields that where NOT stored, so not included in output:\n";
+		print "--  ".implode(', ',array_keys($fields))."\n";
+	}
 }
 
 ######################################
@@ -174,12 +243,17 @@ if (!empty($p['data'])) {
 	$lastid = 0;
 	while(true) {
 
-		if (preg_match('/\bWHERE\b/i',$p['select'])) {
-			$postfix = ($lastid)?" AND id > $lastid":'';
+		if (!empty($p['limit']) && $p['limit']<=1000) { //TODO: if there is a limit, but over 1000, will have to just keep looping until get the right number!
+			$postfix = " LIMIT ".$p['limit'];
 		} else {
-			$postfix = ($lastid)?" WHERE id > $lastid":'';
+			//otherwise loop though 1000 rows at a time...
+			if (preg_match('/\bWHERE\b/i',$p['select'])) {
+				$postfix = ($lastid)?" AND id > $lastid":'';
+			} else {
+				$postfix = ($lastid)?" WHERE id > $lastid":'';
+			}
+			$postfix .= " ORDER BY id ASC LIMIT 1000"; //todo, autodetect what max_matches is set to!!
 		}
-		$postfix .= " ORDER BY id ASC LIMIT 1000"; //todo, autodetect what max_matches is set to!!
 
 		$result = mysqli_query($db,$p['select'].$postfix) or die("unable to run {$p['select']}$postfix;\n".mysqli_error($db)."\n\n");
 
@@ -191,6 +265,7 @@ if (!empty($p['data'])) {
 		$names=array();
 		$types=array();
 		$fields=mysqli_fetch_fields($result);
+
 		foreach ($fields as $key => $obj) {
 			$names[] = $obj->name;
 			switch($obj->type) {
@@ -205,6 +280,9 @@ if (!empty($p['data'])) {
 				case MYSQLI_TYPE_DECIMAL :
 					$types[] = 'real'; break;
 				default:
+					if (isset($mvas[$obj->name]) && $p['schema'] !== 'mysql') {
+						$types[] = 'mva'; break;
+					}
 					$types[] = 'other'; break; //we dont actully care about the exact type, other than knowing numeric
 			}
 		}
@@ -214,11 +292,14 @@ if (!empty($p['data'])) {
 		}
 
 		while($row = mysqli_fetch_row($result)) {
+			//print "INSERT INTO `{$p['table']}` (".implode(",",$names).") VALUES ("; //todo - complete inserts
 			print "INSERT INTO `{$p['table']}` VALUES (";
 			$sep = '';
 			foreach($row as $idx => $value) {
 				if (is_null($value))
 					$value = 'NULL';
+				elseif ($types[$idx] == 'mva') //mva's need special treatment if importing into index
+					$value = "(".mysqli_real_escape_string($db,$value).")";
 				elseif ($types[$idx] != 'int' && $types[$idx] != 'real') //todo maybe add is_numeric to this criteria?
 					$value = "'".mysqli_real_escape_string($db,$value)."'";
 				print "$sep$value";
@@ -231,6 +312,10 @@ if (!empty($p['data'])) {
 		        }
 			$lastid = $row[0];
 		}
+
+	        if (mysqli_num_rows($result) < 1000) //can exit as got all rows!
+        	        break;
+
 	}
 
 	if (!empty($p['lock'])) mysqli_query($db,"UNLOCK TABLES");
