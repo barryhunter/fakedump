@@ -1,3 +1,5 @@
+Looking for indexdump? Moved to its own repo: https://github.com/barryhunter/indexdump
+
 # fakedump
 
 Rather rudimentry 'mysqldump' replacement, that takes an arbitary query, so can dump virtual tables, even views (with their data!)
