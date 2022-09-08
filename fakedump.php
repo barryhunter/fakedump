@@ -41,7 +41,8 @@ $start = microtime(true);
 $p = array(
 	'schema'=>true,
 	'data'=>true,
-	'lock'=>false,
+	'lock'=>false, //like --lock-tables in mysqldump
+	'single'=>false, //like --single-transaction in mysqldump (for innodb tables)
 	'complete'=>false,
 	'extended'=>false,
 
@@ -194,8 +195,13 @@ if (!empty($p['data'])) {
 		$h = gzopen($p['tsv'],'w');
 	}
 
+	if (!empty($p['single'])) {
+		//from https://github.com/twitter-forks/mysql/blob/master/client/mysqldump.c#L4882
 
-	if (!empty($p['lock'])) mysqli_query($db,"LOCK TABLES `{$p['table']}` READ"); //todo this actully needs extact the list of tableS from $select!
+		mysqli_query($db,"SET SESSION TRANSACTION ISOLATION LEVEL REPEATABLE READ");
+		mysqli_query($db,"START TRANSACTION /*!40100 WITH CONSISTENT SNAPSHOT */");
+
+	} elseif (!empty($p['lock'])) mysqli_query($db,"LOCK TABLES `{$p['table']}` READ"); //todo this actully needs extact the list of tableS from $select!
 
 	$result = mysqli_query($db,$p['select'],$options) or die("unable to run {$p['select']};\n".mysqli_error($db)."\n\n");
 
@@ -268,7 +274,7 @@ if (!empty($p['data'])) {
 	}
 	print ");\n";
 
-	if (!empty($p['lock'])) mysqli_query($db,"UNLOCK TABLES");
+	if (!empty($p['lock']) || !empty($p['single'])) mysqli_query($db,"UNLOCK TABLES"); /* unlock but no commit! */
 }
 
 ######################################
