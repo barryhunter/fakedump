@@ -43,8 +43,9 @@ $p = array(
 	'data'=>true,
 	'lock'=>false, //like --lock-tables in mysqldump
 	'single'=>false, //like --single-transaction in mysqldump (for innodb tables)
-	'complete'=>false,
-	'extended'=>false,
+	'complete'=>false, //get all the columns named in every insert/replace
+	'extended'=>false, //get multiple rows per insert
+	'replace'=>false, //set to true to get REPLACE INTO (eg to append, make sure the table as a key, and set schema=0 !)
 
 		//query to run (can be something as simple as "select * from aview")
 		'select' => "select gridimage_id,user_id,realname,title from gridimage_search limit 100",
@@ -241,10 +242,11 @@ if (!empty($p['data'])) {
 		}
 	}
 
+	$insert = $p['replace']?'REPLACE':'INSERT';
 	if ($p['complete']) {
-		$insert = "INSERT INTO `{$p['table']}` (".implode(",",$names).") VALUES (";
+		$insert .= " INTO `{$p['table']}` (".implode(",",$names).") VALUES (";
 	} else {
-		$insert = "INSERT INTO `{$p['table']}` VALUES (";
+		$insert .= " INTO `{$p['table']}` VALUES (";
 	}
 
 	$c = 0;
