@@ -42,6 +42,8 @@ $p = array(
 	'schema'=>true,
 	'data'=>true,
 	'lock'=>false,
+	'complete'=>false,
+	'extended'=>false,
 
 		//query to run (can be something as simple as "select * from aview")
 		'select' => "select gridimage_id,user_id,realname,title from gridimage_search limit 100",
@@ -216,7 +218,10 @@ if (!empty($p['data'])) {
 			case MYSQLI_TYPE_DECIMAL :
 				$types[] = 'real'; break;
 			default:
-				$types[] = 'other'; break; //we dont actully care about the exact type, other than knowing numeric
+				if (($p['schema'] === 'rt' || $names[0] == 'id') && strpos($obj->name,'_ids')) //not perfect. Need a proper way to idenfity mvas
+					$types[] = 'mva';
+				else
+					$types[] = 'other'; //we dont actully care about the exact type, other than knowing numeric
 		}
 	}
 
@@ -230,23 +235,38 @@ if (!empty($p['data'])) {
 		}
 	}
 
+	if ($p['complete']) {
+		$insert = "INSERT INTO `{$p['table']}` (".implode(",",$names).") VALUES (";
+	} else {
+		$insert = "INSERT INTO `{$p['table']}` VALUES (";
+	}
+
+	$c = 0;
 	while($row = mysqli_fetch_row($result)) {
-		print "INSERT INTO `{$p['table']}` VALUES (";
-		$sep = '';
+		if ($p['extended'] && $c%100) {
+			$sep = "),\n(";
+		} elseif ($c) {
+			$sep = ");\n$insert";
+		} else {
+			$sep = $insert;
+		}
 		foreach($row as $idx => $value) {
 			if (is_null($value))
 				$value = 'NULL';
+			elseif ($types[$idx] == 'mva')
+				$value = "(".mysqli_real_escape_string($db,$value).")";
 			elseif ($types[$idx] != 'int' && $types[$idx] != 'real') //todo maybe add is_numeric to this criteria?
 				$value = "'".mysqli_real_escape_string($db,$value)."'";
 			print "$sep$value";
 			$sep = ',';
 		}
-		print ");\n";
 		if (!empty($p['tsv'])) {
 			$row = array_map('escape_tsv',$row); //mimik what mysql client does, by escaping these chars, works with mysqlimport!
          	        gzwrite($h,implode("\t",$row)."\n");
 	        }
+		$c++;
 	}
+	print ");\n";
 
 	if (!empty($p['lock'])) mysqli_query($db,"UNLOCK TABLES");
 }
