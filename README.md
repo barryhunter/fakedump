@@ -1,4 +1,4 @@
-Looking for indexdump? Moved to its own repo: https://github.com/barryhunter/indexdump
+Looking for indexdump? (for dumping from SphinxSearch/ManticoreSearch) Moved to its own repo: https://github.com/barryhunter/indexdump
 
 # fakedump
 
